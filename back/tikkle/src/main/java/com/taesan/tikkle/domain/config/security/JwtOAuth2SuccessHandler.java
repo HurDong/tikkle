@@ -7,6 +7,7 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.security.core.Authentication;
@@ -31,6 +32,9 @@ public class JwtOAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandl
 	private final JwtUtil jwtUtil;
 	private final RedisTokenService redisTokenService;
 	private final ObjectMapper objectMapper;
+
+	@Value("${tikkle.redirect}")
+	private String redirectUrl;
 
 	@Override
 	public void onAuthenticationSuccess(HttpServletRequest request,
@@ -69,8 +73,7 @@ public class JwtOAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandl
 
 		redisTokenService.storeRefreshToken(memberId, refreshToken, 1000 * 60 * 60 * 24);
 
-		String redirectUrl = "https://j11a501.p.ssafy.io/home";
-		getRedirectStrategy().sendRedirect(request, response, redirectUrl);
+		getRedirectStrategy().sendRedirect(request, response, redirectUrl + "/home");
 
 		//		MemberResponse memberResponse = new MemberResponse(
 		//			oAuth2User.getAttribute("memberId"),

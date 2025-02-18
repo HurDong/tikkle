@@ -6,12 +6,7 @@ import com.github.f4b6a3.ulid.UlidCreator;
 import com.taesan.tikkle.domain.organization.entity.Organization;
 import com.taesan.tikkle.global.entity.AuditableEntity;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.ManyToOne;
-import jakarta.persistence.Table;
+import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -46,18 +41,24 @@ public class Member extends AuditableEntity {
 	@Column(length = 128)
 	private String email;
 
+	@Column(name = "role")
+	@Enumerated(EnumType.STRING)
+	private Role role;
+
 	@Builder
 	public Member(Organization organization,
 		// Account account,
 		String name,
 		String nickname,
-		String email) {
+		String email,
+	  	Role role) {
 
 		this.organization = organization;
 		// this.account = account;
 		this.name = name;
 		this.nickname = nickname;
 		this.email = email;
+		this.role = role;
 	}
 
 	public void changeName(String name) {

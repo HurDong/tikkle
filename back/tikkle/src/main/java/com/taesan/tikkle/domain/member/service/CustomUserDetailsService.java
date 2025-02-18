@@ -5,6 +5,8 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
@@ -40,7 +42,9 @@ public class CustomUserDetailsService implements UserDetailsService {
 		Member member = memberRepository.findById(memberId)
 			.orElseThrow(() -> new UsernameNotFoundException("User not found with UUID: " + memberId));
 
+		GrantedAuthority grantedAuthority = new SimpleGrantedAuthority(member.getRole().toString());
+
 		// 조회된 사용자를 CustomUserDetails로 변환하여 반환
-		return new CustomUserDetails(member.getId(), List.of());
+		return new CustomUserDetails(member.getId(), List.of(grantedAuthority));
 	}
 }

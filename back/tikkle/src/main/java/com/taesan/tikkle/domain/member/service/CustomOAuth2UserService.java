@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.taesan.tikkle.domain.member.entity.Role;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -50,6 +51,9 @@ public class CustomOAuth2UserService implements OAuth2UserService<OAuth2UserRequ
 
 	@Value("${file.upload.image-dir}")
 	private String imageUploadDir;
+
+	@Value("${tikkle.mm-domain}")
+	private String mattermostDomain;
 
 	@Override
 	public OAuth2User loadUser(OAuth2UserRequest userRequest) throws OAuth2AuthenticationException {
@@ -102,6 +106,7 @@ public class CustomOAuth2UserService implements OAuth2UserService<OAuth2UserRequ
 				.name(name)
 				.nickname(nickname)
 				.email(email)
+				.role(Role.ROLE_USER)
 				.build();
 
 			Member savedMember = memberRepository.save(newMember);
@@ -137,7 +142,7 @@ public class CustomOAuth2UserService implements OAuth2UserService<OAuth2UserRequ
 		HttpEntity<String> entity = new HttpEntity<>(headers);
 
 		ResponseEntity<byte[]> response = restTemplate.exchange(
-			"https://j11a501.p.ssafy.io/mattermost/api/v4/users/" + userId + "/image",
+			mattermostDomain + "/api/v4/users/" + userId + "/image",
 			HttpMethod.GET,
 			entity,
 			byte[].class
