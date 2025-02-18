@@ -3,11 +3,12 @@ package com.taesan.tikkle.domain.appointment.service;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,35 +51,67 @@ public class AppointmentService {
 
 	@Transactional(readOnly = true)
 	public List<TodoAppointmentResponse> getTodoAppointments(UUID memberId) {
-		List<Appointment> appointments = new ArrayList<>();
-		// performer의 가장 최근 appointment를 추출하여 list에 추가
-		extractTodoAppointments(chatroomRepository.findByPerformerId(memberId), appointments);
-		// writer의 가장 최근 appointment를 추출하여 list에 추가
-		extractTodoAppointments(chatroomRepository.findByWriterId(memberId), appointments);
-		// 접속한 member의 약속에 대한 게시글과 상대방 정보 그리고 채팅방 정보등을 주입하여 반환
-		return appointments.stream()
-			.map(appointment -> {
-				Chatroom chatroom = appointment.getRoom();
-				Board board = boardRepository.findById(chatroom.getBoard().getId())
-					.orElseThrow(() -> new CustomException(ErrorCode.BOARD_NOT_FOUND));
+		// 🎯 현재 로그인한 사용자가 performer 또는 writer로 속한 채팅방 조회
+		List<Chatroom> chatrooms = chatroomRepository.findByMemberId(memberId);
 
-				String partner = chatroom.getPerformer().getId().equals(memberId)
-					? chatroom.getWriter().getName()
-					: chatroom.getPerformer().getName();
+		// 🎯 각 채팅방에서 최신 약속(삭제되지 않은 것 중 가장 최근 것)만 추출
+		List<Appointment> appointments = extractLatestAppointments(chatrooms);
 
-				return new TodoAppointmentResponse(appointment.getId(), board.getStatus(), partner,
-					appointment.getApptTime(), board.getTitle(), chatroom.getId());
-			})
-			.collect(Collectors.toList());
+		// 🎯 약속과 연결된 Board 엔티티들을 한 번에 조회하여 캐싱 (N+1 문제 방지)
+		Map<UUID, Board> boardCache = extractBoardCache(appointments);
+
+		// 🎯 Appointment 데이터를 TodoAppointmentResponse 형식으로 변환하여 반환
+		return convertToTodoAppointmentResponses(appointments, boardCache, memberId);
 	}
 
+	@Deprecated
 	private void extractTodoAppointments(List<Chatroom> chatrooms, List<Appointment> appointments) {
-		chatrooms.stream()
-			.map(Chatroom::getAppointments) // chatrooms 각각의 appointments에 대하여
+		chatrooms.stream().map(Chatroom::getAppointments) // chatrooms 각각의 appointments에 대하여
 			.filter(appts -> !appts.isEmpty()) // 비어 있지 않은 appointments 중에서
 			.map(appts -> appts.get(appts.size() - 1)) // 가장 최신 appointment을 골라서
 			.filter(appt -> !appt.isDeleted()) // 삭제 되지 않은 것만
 			.forEach(appointments::add); // 리스트에 추가
+	}
+
+	private List<Appointment> extractLatestAppointments(List<Chatroom> chatrooms) {
+		return chatrooms.stream()
+			.flatMap(chatroom -> chatroom.getAppointments().stream()) // chatroom의 appointments 스트림 변환
+			.filter(appt -> !appt.isDeleted()) // 삭제되지 않은 약속만
+			.sorted(Comparator.comparing(Appointment::getApptTime).reversed()) // 최신 약속 우선 정렬
+			.limit(1) // 각 chatroom에서 가장 최신 약속만 선택
+			.collect(Collectors.toList()); // 리스트로 반환
+	}
+
+	private Map<UUID, Board> extractBoardCache(List<Appointment> appointments) {
+		return boardRepository.findAllById(
+			appointments.stream().map(appt -> appt.getRoom().getBoard().getId()) // 각 Appointment가 속한 Board ID 추출
+				.collect(Collectors.toSet()) // 중복 제거를 위해 Set으로 변환
+		).stream().collect(Collectors.toMap(Board::getId, board -> board)); // Board ID를 Key로, Board 객체를 Value로 저장
+	}
+
+	private List<TodoAppointmentResponse> convertToTodoAppointmentResponses(List<Appointment> appointments,
+		Map<UUID, Board> boardCache, UUID memberId) {
+		return appointments.stream().map(appointment -> {
+			Chatroom chatroom = appointment.getRoom();
+			Board board = boardCache.get(
+				chatroom.getBoard().getId()); // boardCache에서 현재 chatroom의 board ID로 Board 객체 가져오기
+
+			if (board == null) {
+				throw new CustomException(ErrorCode.BOARD_NOT_FOUND);
+			}
+
+			// 접속한 memberId와 performerId를 비교하여 상대방 정보 설정
+			String partner = chatroom.getPerformer().getId().equals(memberId) ? chatroom.getWriter().getName() :
+				chatroom.getPerformer().getName();
+
+			return new TodoAppointmentResponse(appointment.getId(), // Appointment ID
+				board.getStatus(), // Board 상태
+				partner, // 대화 상대 이름
+				appointment.getApptTime(), // 약속 시간
+				board.getTitle(), // Board 제목
+				chatroom.getId() // Chatroom ID
+			);
+		}).collect(Collectors.toList()); // 변환된 TodoAppointmentResponse 리스트 반환
 	}
 
 	@Transactional
@@ -172,17 +205,14 @@ public class AppointmentService {
 
 		List<Appointment> appointments = appointmentRepository.findAppointmentsWithBoardByMemberId(username);
 
-		return appointments.stream()
-			.map(appointment -> {
-				UUID memberId = username.equals(appointment.getRoom().getWriter().getId()) ?
-					appointment.getRoom().getPerformer().getId() :
-					appointment.getRoom().getWriter().getId();
-				Member member = memberRepository.findByIdAndDeletedAtIsNull(memberId).get();
-				Board board = appointment.getRoom().getBoard();
-				byte[] partnerImage = fileService.getProfileImage(memberId);  // partnerImage 조회 로직 추가
-				return TradeLogFindAllResponse.from(board, member, partnerImage);
-			})
-			.collect(Collectors.toList());
+		return appointments.stream().map(appointment -> {
+			UUID memberId = username.equals(appointment.getRoom().getWriter().getId()) ?
+				appointment.getRoom().getPerformer().getId() : appointment.getRoom().getWriter().getId();
+			Member member = memberRepository.findByIdAndDeletedAtIsNull(memberId).get();
+			Board board = appointment.getRoom().getBoard();
+			byte[] partnerImage = fileService.getProfileImage(memberId);  // partnerImage 조회 로직 추가
+			return TradeLogFindAllResponse.from(board, member, partnerImage);
+		}).collect(Collectors.toList());
 	}
 
 	@Transactional(readOnly = true)
