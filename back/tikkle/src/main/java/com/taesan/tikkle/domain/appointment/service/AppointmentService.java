@@ -30,53 +30,55 @@ import com.taesan.tikkle.domain.member.repository.MemberRepository;
 import com.taesan.tikkle.global.errors.ErrorCode;
 import com.taesan.tikkle.global.exceptions.CustomException;
 
+import lombok.RequiredArgsConstructor;
+
 @Service
+@RequiredArgsConstructor
 public class AppointmentService {
 
-	@Autowired
-	private AppointmentRepository appointmentRepository;
-	@Autowired
-	private ChatroomRepository chatroomRepository;
-	@Autowired
-	private BoardRepository boardRepository;
-	@Autowired
-	private AccountRepository accountRepository;
-	@Autowired
-	private MemberRepository memberRepository;
-	@Autowired
-	private FileService fileService;
+	private final AppointmentRepository appointmentRepository;
 
+	private final ChatroomRepository chatroomRepository;
+
+	private final BoardRepository boardRepository;
+
+	private final AccountRepository accountRepository;
+
+	private final MemberRepository memberRepository;
+
+	private final FileService fileService;
+
+	@Transactional(readOnly = true)
 	public List<TodoAppointmentResponse> getTodoAppointments(UUID memberId) {
 		List<Appointment> appointments = new ArrayList<>();
-		List<Chatroom> performers = chatroomRepository.findByPerformerId(memberId);
-		List<Chatroom> writers = chatroomRepository.findByWriterId(memberId);
-		for (Chatroom chatroom : performers) {
+		// performer의 가장 최근 appointment를 추출하여 list에 추가
+		extractTodoAppointments(chatroomRepository.findByPerformerId(memberId), appointments);
+		// writer의 가장 최근 appointment를 추출하여 list에 추가
+		extractTodoAppointments(chatroomRepository.findByWriterId(memberId), appointments);
+		// 접속한 member의 약속에 대한 게시글과 상대방 정보 그리고 채팅방 정보등을 주입하여 반환
+		return appointments.stream()
+			.map(appointment -> {
+				Chatroom chatroom = appointment.getRoom();
+				Board board = boardRepository.findById(chatroom.getBoard().getId())
+					.orElseThrow(() -> new CustomException(ErrorCode.BOARD_NOT_FOUND));
 
-			if (!chatroom.getAppointments().isEmpty() && !chatroom.getAppointments()
-				.get(chatroom.getAppointments().size() - 1)
-				.isDeleted()) {
-				appointments.add(chatroom.getAppointments().get(chatroom.getAppointments().size() - 1));
-			}
-		}
-		for (Chatroom chatroom : writers) {
-			if (!chatroom.getAppointments().isEmpty() && !chatroom.getAppointments()
-				.get(chatroom.getAppointments().size() - 1)
-				.isDeleted()) {
-				appointments.add(chatroom.getAppointments().get(chatroom.getAppointments().size() - 1));
-			}
-		}
-		List<TodoAppointmentResponse> response = new ArrayList<>();
-		for (Appointment appointment : appointments) {
-			Chatroom chatroom = appointment.getRoom();
-			Board board = boardRepository.findById(chatroom.getBoard().getId())
-				.orElseThrow(() -> new CustomException(ErrorCode.BOARD_NOT_FOUND));
-			String partner = chatroom.getPerformer().getId().equals(memberId) ? chatroom.getWriter().getName() :
-				chatroom.getPerformer().getName();
-			response.add(
-				new TodoAppointmentResponse(appointment.getId(), board.getStatus(), partner, appointment.getApptTime(),
-					board.getTitle(), chatroom.getId()));
-		}
-		return response;
+				String partner = chatroom.getPerformer().getId().equals(memberId)
+					? chatroom.getWriter().getName()
+					: chatroom.getPerformer().getName();
+
+				return new TodoAppointmentResponse(appointment.getId(), board.getStatus(), partner,
+					appointment.getApptTime(), board.getTitle(), chatroom.getId());
+			})
+			.collect(Collectors.toList());
+	}
+
+	private void extractTodoAppointments(List<Chatroom> chatrooms, List<Appointment> appointments) {
+		chatrooms.stream()
+			.map(Chatroom::getAppointments) // chatrooms 각각의 appointments에 대하여
+			.filter(appts -> !appts.isEmpty()) // 비어 있지 않은 appointments 중에서
+			.map(appts -> appts.get(appts.size() - 1)) // 가장 최신 appointment을 골라서
+			.filter(appt -> !appt.isDeleted()) // 삭제 되지 않은 것만
+			.forEach(appointments::add); // 리스트에 추가
 	}
 
 	@Transactional
